@@ -25,12 +25,11 @@
 
 struct process {
     pid_t pid;
-    int stdin;
-    int stdout;
+    int in;
+    int out;
 };
 
 static struct process process_spawn(char *const *argv);
-static void *process_handler(void *p);
 
 static void *counter_thread(void *data);
 static ssize_t write_count(int pipe);
@@ -42,8 +41,18 @@ int main(int argc, char **argv) {
     pthread_t count;
     TRY(pthread_create(&count, NULL, counter_thread, NULL));
 
-    pthread_t handler;
-    TRY(pthread_create(&handler, NULL, process_handler, (void *)&pico8));
+    char buffer[1024];
+    while (
+        read(pico8.out, buffer, sizeof(buffer)) > 0 &&
+        write_count(pico8.in) > 0
+    ) {
+        // TODO(nlordell): Instead of just assuming anything on stdout is a
+        // request to sample a gamepad, we should parse out some "control
+        // characters" from the process's stdout and forward the rest of the
+        // data to our stdout (this allows things like `printh` to continue
+        // working in PICO-8.
+    }
+    TRY(errno);
 
     if (waitpid(pico8.pid, NULL, 0) != pico8.pid) {
         TRY(errno);
@@ -58,17 +67,17 @@ struct process process_spawn(char *const *argv) {
     const int R = 0;
     const int W = 1;
 
-    int stdin[2], stdout[2];
-    TRY(pipe(stdin));
-    TRY(pipe(stdout));
+    int in[2], out[2];
+    TRY(pipe(in));
+    TRY(pipe(out));
 
     posix_spawn_file_actions_t file_actions;
     TRY(posix_spawn_file_actions_init(&file_actions));
-    TRY(posix_spawn_file_actions_adddup2(&file_actions, stdin[R], STDIN_FILENO));
-    TRY(posix_spawn_file_actions_adddup2(&file_actions, stdout[W], STDOUT_FILENO));
+    TRY(posix_spawn_file_actions_adddup2(&file_actions, in[R], STDIN_FILENO));
+    TRY(posix_spawn_file_actions_adddup2(&file_actions, out[W], STDOUT_FILENO));
     for (int i = 0; i < 2; ++i) {
-        TRY(posix_spawn_file_actions_addclose(&file_actions, stdin[i]));
-        TRY(posix_spawn_file_actions_addclose(&file_actions, stdout[i]));
+        TRY(posix_spawn_file_actions_addclose(&file_actions, in[i]));
+        TRY(posix_spawn_file_actions_addclose(&file_actions, out[i]));
     }
 
     sigset_t mask;
@@ -87,31 +96,18 @@ struct process process_spawn(char *const *argv) {
     pid_t pid;
     TRY(posix_spawnp(&pid, argv[0], &file_actions, &attr, argv, environ));
 
-    close(stdin[R]);
-    close(stdout[W]);
+    close(in[R]);
+    close(out[W]);
     posix_spawn_file_actions_destroy(&file_actions);
     posix_spawnattr_destroy(&attr);
 
     return (struct process){
         .pid = pid,
-        .stdin = stdin[W],
-        .stdout = stdout[R],
+        .in = in[W],
+        .out = out[R],
     };
 }
 
-void *process_handler(void *data) {
-    struct process p = *(struct process *)data;
-    char buffer[1024];
-
-    write_count(p.stdin);
-    while (
-        read(p.stdout, buffer, sizeof(buffer)) > 0 &&
-        write_count(p.stdin) > 0
-    ) {}
-
-    TRY(errno);
-    return NULL;
-}
 
 static atomic_uint counter;
 

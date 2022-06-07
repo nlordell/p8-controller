@@ -6,7 +6,7 @@ function _init()
 end
 
 function _update()
-	serial(0x805,0x9a04,1)
+	printh"☉";
 	serial(0x804,0x9a00,5)
 end
 
