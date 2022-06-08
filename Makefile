@@ -1,3 +1,3 @@
-target/pico8-controller: src/main.c
+target/pico8-ctrl: src/main.c
 	mkdir -p target
 	$(CC) -std=c11 $< -o $@ -Wall `sdl2-config --cflags --libs`

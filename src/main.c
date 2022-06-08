@@ -54,11 +54,17 @@ static void controller_writestate(struct controller *c, int fd);
 static char const marker[] = u8"☉☉\n";
 
 int main(int argc, char **argv) {
+    char *pico8_args[argc + 1];
+    pico8_args[0] = "pico8";
+    for (int i = 1; i < argc; ++i) {
+        pico8_args[i] = argv[i];
+    }
+    pico8_args[argc] = NULL;
+
     if (SDL_Init(SDL_INIT_GAMECONTROLLER) < 0) {
         PANIC(SDL_GetError());
     }
 
-    char * const pico8_args[] = {"pico8", "cart/controller.p8", NULL};
     struct process pico8 = process_spawn(pico8_args);
     struct reader reader = reader_init(pico8.out);
     struct controller controller = {0};
