@@ -18,6 +18,7 @@
         fprintf(stderr, "ERROR: %s (%s L%d)\n", (x), __FILE__, __LINE__); \
         exit(EXIT_FAILURE); \
     } while (false)
+
 #define TRY(x) \
     do { \
         int result; \
