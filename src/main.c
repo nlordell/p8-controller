@@ -11,19 +11,15 @@
 #include <time.h>
 #include <unistd.h>
 
-#include <SDL.h>
+#include <pthread.h>
 
-#define PANIC(x) \
-    do { \
-        fprintf(stderr, "ERROR: %s (%s L%d)\n", (x), __FILE__, __LINE__); \
-        exit(EXIT_FAILURE); \
-    } while (false)
 #define TRY(x) \
     do { \
         int result; \
         if ((result = (x)) != 0) { \
             result = result == -1 ? errno : result; \
-            PANIC(strerror(result)); \
+            fprintf(stderr, "ERROR: %s (%s L%d)\n", strerror(result), __FILE__, __LINE__); \
+            exit(EXIT_FAILURE); \
         } \
     } while (false)
 
@@ -45,40 +41,48 @@ struct reader {
 static struct reader reader_init(int fd);
 static size_t reader_readline(struct reader *r, char *buffer, size_t buflen, bool *truncated);
 
-struct controller {
-    SDL_GameController *handle;
-};
-
-static void controller_writestate(struct controller *c, int fd);
-
-static char const marker[] = u8"☉☉\n";
+static void *counter_thread(void *data);
+static ssize_t write_count(int pipe);
 
 int main(int argc, char **argv) {
-    if (SDL_Init(SDL_INIT_GAMECONTROLLER) < 0) {
-        PANIC(SDL_GetError());
-    }
-
     char * const pico8_args[] = {"pico8", "cart/controller.p8", NULL};
     struct process pico8 = process_spawn(pico8_args);
 
+    pthread_t count;
+    TRY(pthread_create(&count, NULL, counter_thread, NULL));
+
+    /*
+    char buffer[1024];
+    while (
+        read(pico8.out, buffer, sizeof(buffer)) > 0 &&
+        write_count(pico8.in) > 0
+    ) {
+        // TODO(nlordell): Instead of just assuming anything on stdout is a
+        // request to sample a gamepad, we should parse out some "control
+        // characters" from the process's stdout and forward the rest of the
+        // data to our stdout (this allows things like `printh` to continue
+        // working in PICO-8.
+    }
+    TRY(errno);
+    */
     struct reader reader = reader_init(pico8.out);
-    struct controller controller = {0};
+    char const marker[] = u8"☉☉\n";
 
     char buffer[1024];
     size_t len;
     bool truncated;
     while ((len = reader_readline(&reader, buffer, sizeof(buffer), &truncated)) > 0) {
         if (len == sizeof(marker)-1 && memcmp(buffer, marker, len) == 0) {
-            controller_writestate(&controller, pico8.in);
+            write_count(pico8.in);
         } else {
-            fwrite(buffer, sizeof(char), len, stdout);
-            TRY(ferror(stdout));
+            TRY(fwrite(buffer, sizeof(char), len, stdout) < 0);
             while (truncated) {
-                if ((len = reader_readline(&reader, buffer, sizeof(buffer), &truncated)) == 0) {
+                len = reader_readline(&reader, buffer, sizeof(buffer), &truncated);
+                if (len > 0) {
+                    TRY(fwrite(buffer, sizeof(char), len, stdout) < 0);
+                } else {
                     goto eof;
                 }
-                fwrite(buffer, sizeof(char), len, stdout);
-                TRY(ferror(stdout));
             }
         }
     }
@@ -151,9 +155,11 @@ size_t reader_readline(struct reader *r, char *buffer, size_t buflen, bool *trun
     bool tr = true;
     while (i < buflen) {
         if (r->pos == r->len) {
+            ssize_t n = read(r->fd, r->buffer, sizeof(r->buffer));
+            TRY(n < 0);
+
             r->pos = 0;
-            r->len = read(r->fd, r->buffer, sizeof(r->buffer));
-            TRY(errno);
+            r->len = n;
         }
 
         if (r->len == 0) {
@@ -175,59 +181,40 @@ size_t reader_readline(struct reader *r, char *buffer, size_t buflen, bool *trun
     return i;
 }
 
-static bool controller_open(struct controller *c) {
-    if (!SDL_GameControllerGetAttached(c->handle)) {
-        if (c->handle != NULL) {
-            SDL_GameControllerClose(c->handle);
-            c->handle = NULL;
-        }
+static atomic_uint counter;
 
-        int joysticks = SDL_NumJoysticks();
-        for (int i = 0; i < joysticks && c->handle == NULL; ++i) {
-            if (SDL_IsGameController(i)) {
-                c->handle = SDL_GameControllerOpen(i);
-            }
-        }
+void *counter_thread(void *data) {
+    struct timespec duration = {
+        .tv_sec = 0,
+        .tv_nsec = 62500000,
+    };
 
-        if (c->handle == NULL) {
-            return false;
-        }
+    while (true) {
+        nanosleep(&duration, NULL);
+        atomic_fetch_add(&counter, 0x1000);
     }
 
-    SDL_GameControllerUpdate();
-    return true;
+    return NULL;
 }
 
-void controller_writestate(struct controller *c, int fd) {
+ssize_t write_count(int pipe) {
     union {
-        struct {
-            int16_t axis[SDL_CONTROLLER_AXIS_MAX];
-            uint8_t button[SDL_CONTROLLER_BUTTON_MAX];
-            char newline;
-        } state;
-        char bytes[34];
+        uint32_t count;
+        char bytes[5];
     } buffer;
-    _Static_assert(sizeof(buffer.bytes) == sizeof(buffer.state), "too many buttons");
+    buffer.count = (uint32_t)atomic_load(&counter);
 
-    if (controller_open(c)) {
-        for (int i = 0; i < SDL_CONTROLLER_AXIS_MAX; ++i) {
-            buffer.state.axis[i] = SDL_GameControllerGetAxis(c->handle, i);
-        }
-        for (int i = 0; i < SDL_CONTROLLER_BUTTON_MAX; ++i) {
-            buffer.state.button[i] = SDL_GameControllerGetButton(c->handle, i) * 0xff;
-        }
-    } else {
-        memset(buffer.bytes, 0, sizeof(buffer.bytes) - 1);
-    }
-    buffer.state.newline = '\n';
+    // Make sure to write a newline, since it seems like PICO-8 will buffer
+    // stdin reads until it gets one.
+    buffer.bytes[4] = '\n';
 
     char *ptr = buffer.bytes;
     size_t rem = sizeof(buffer.bytes);
     while (rem > 0) {
-        ssize_t n = write(fd, ptr, rem);
-        TRY(errno);
-
+        ssize_t n = write(pipe, ptr, rem);
         ptr += n;
         rem -= n;
     }
+
+    return sizeof(buffer.bytes);
 }
