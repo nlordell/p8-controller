@@ -60,7 +60,6 @@ int main(int argc, char **argv) {
 
     char * const pico8_args[] = {"pico8", "cart/controller.p8", NULL};
     struct process pico8 = process_spawn(pico8_args);
-
     struct reader reader = reader_init(pico8.out);
     struct controller controller = {0};
 
@@ -151,9 +150,11 @@ size_t reader_readline(struct reader *r, char *buffer, size_t buflen, bool *trun
     bool tr = true;
     while (i < buflen) {
         if (r->pos == r->len) {
+            ssize_t n = read(r->fd, r->buffer, sizeof(r->buffer));
+            TRY(n < 0);
+
             r->pos = 0;
-            r->len = read(r->fd, r->buffer, sizeof(r->buffer));
-            TRY(errno);
+            r->len = n;
         }
 
         if (r->len == 0) {
@@ -225,7 +226,7 @@ void controller_writestate(struct controller *c, int fd) {
     size_t rem = sizeof(buffer.bytes);
     while (rem > 0) {
         ssize_t n = write(fd, ptr, rem);
-        TRY(errno);
+        TRY(n < 0);
 
         ptr += n;
         rem -= n;
