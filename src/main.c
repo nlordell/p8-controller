@@ -11,15 +11,19 @@
 #include <time.h>
 #include <unistd.h>
 
-#include <pthread.h>
+#include <SDL.h>
 
+#define PANIC(x) \
+    do { \
+        fprintf(stderr, "ERROR: %s (%s L%d)\n", (x), __FILE__, __LINE__); \
+        exit(EXIT_FAILURE); \
+    } while (false)
 #define TRY(x) \
     do { \
         int result; \
         if ((result = (x)) != 0) { \
             result = result == -1 ? errno : result; \
-            fprintf(stderr, "ERROR: %s (%s L%d)\n", strerror(result), __FILE__, __LINE__); \
-            exit(EXIT_FAILURE); \
+            PANIC(strerror(result)); \
         } \
     } while (false)
 
@@ -29,30 +33,56 @@ struct process {
     int out;
 };
 
-static struct process process_spawn(char *const *argv);
+static struct process process_spawn(char * const *argv);
 
-static void *counter_thread(void *data);
-static ssize_t write_count(int pipe);
+struct reader {
+    int fd;
+    size_t len;
+    size_t pos;
+    char buffer[1024];
+};
+
+static struct reader reader_init(int fd);
+static size_t reader_readline(struct reader *r, char *buffer, size_t buflen, bool *truncated);
+
+struct controller {
+    SDL_GameController *handle;
+};
+
+static void controller_writestate(struct controller *c, int fd);
+
+static char const marker[] = u8"☉☉\n";
 
 int main(int argc, char **argv) {
-    char *const pico8_args[] = {"pico8", "cart/controller.p8", NULL};
+    if (SDL_Init(SDL_INIT_GAMECONTROLLER) < 0) {
+        PANIC(SDL_GetError());
+    }
+
+    char * const pico8_args[] = {"pico8", "cart/controller.p8", NULL};
     struct process pico8 = process_spawn(pico8_args);
 
-    pthread_t count;
-    TRY(pthread_create(&count, NULL, counter_thread, NULL));
+    struct reader reader = reader_init(pico8.out);
+    struct controller controller = {0};
 
     char buffer[1024];
-    while (
-        read(pico8.out, buffer, sizeof(buffer)) > 0 &&
-        write_count(pico8.in) > 0
-    ) {
-        // TODO(nlordell): Instead of just assuming anything on stdout is a
-        // request to sample a gamepad, we should parse out some "control
-        // characters" from the process's stdout and forward the rest of the
-        // data to our stdout (this allows things like `printh` to continue
-        // working in PICO-8.
+    size_t len;
+    bool truncated;
+    while ((len = reader_readline(&reader, buffer, sizeof(buffer), &truncated)) > 0) {
+        if (len == sizeof(marker)-1 && memcmp(buffer, marker, len) == 0) {
+            controller_writestate(&controller, pico8.in);
+        } else {
+            fwrite(buffer, sizeof(char), len, stdout);
+            TRY(ferror(stdout));
+            while (truncated) {
+                if ((len = reader_readline(&reader, buffer, sizeof(buffer), &truncated)) == 0) {
+                    goto eof;
+                }
+                fwrite(buffer, sizeof(char), len, stdout);
+                TRY(ferror(stdout));
+            }
+        }
     }
-    TRY(errno);
+eof:
 
     if (waitpid(pico8.pid, NULL, 0) != pico8.pid) {
         TRY(errno);
@@ -108,41 +138,96 @@ struct process process_spawn(char *const *argv) {
     };
 }
 
-
-static atomic_uint counter;
-
-void *counter_thread(void *data) {
-    struct timespec duration = {
-        .tv_sec = 0,
-        .tv_nsec = 62500000,
+struct reader reader_init(int fd) {
+    return (struct reader) {
+        .fd = fd,
+        .pos = 0,
+        .len = 0,
     };
-
-    while (true) {
-        nanosleep(&duration, NULL);
-        atomic_fetch_add(&counter, 0x1000);
-    }
-
-    return NULL;
 }
 
-ssize_t write_count(int pipe) {
-    union {
-        uint32_t count;
-        char bytes[5];
-    } buffer;
-    buffer.count = (uint32_t)atomic_load(&counter);
+size_t reader_readline(struct reader *r, char *buffer, size_t buflen, bool *truncated) {
+    int i = 0;
+    bool tr = true;
+    while (i < buflen) {
+        if (r->pos == r->len) {
+            r->pos = 0;
+            r->len = read(r->fd, r->buffer, sizeof(r->buffer));
+            TRY(errno);
+        }
 
-    // Make sure to write a newline, since it seems like PICO-8 will buffer
-    // stdin reads until it gets one.
-    buffer.bytes[4] = '\n';
+        if (r->len == 0) {
+            break;
+        }
+
+        char next = r->buffer[r->pos++];
+        buffer[i++] = next;
+
+        if (next == '\n') {
+            tr = false;
+            break;
+        }
+    }
+
+    if (truncated != NULL) {
+        *truncated = tr;
+    }
+    return i;
+}
+
+static bool controller_open(struct controller *c) {
+    if (!SDL_GameControllerGetAttached(c->handle)) {
+        if (c->handle != NULL) {
+            SDL_GameControllerClose(c->handle);
+            c->handle = NULL;
+        }
+
+        int joysticks = SDL_NumJoysticks();
+        for (int i = 0; i < joysticks && c->handle == NULL; ++i) {
+            if (SDL_IsGameController(i)) {
+                c->handle = SDL_GameControllerOpen(i);
+            }
+        }
+
+        if (c->handle == NULL) {
+            return false;
+        }
+    }
+
+    SDL_GameControllerUpdate();
+    return true;
+}
+
+void controller_writestate(struct controller *c, int fd) {
+    union {
+        struct {
+            int16_t axis[SDL_CONTROLLER_AXIS_MAX];
+            uint8_t button[SDL_CONTROLLER_BUTTON_MAX];
+            char newline;
+        } state;
+        char bytes[34];
+    } buffer;
+    _Static_assert(sizeof(buffer.bytes) == sizeof(buffer.state), "too many buttons");
+
+    if (controller_open(c)) {
+        for (int i = 0; i < SDL_CONTROLLER_AXIS_MAX; ++i) {
+            buffer.state.axis[i] = SDL_GameControllerGetAxis(c->handle, i);
+        }
+        for (int i = 0; i < SDL_CONTROLLER_BUTTON_MAX; ++i) {
+            buffer.state.button[i] = SDL_GameControllerGetButton(c->handle, i) * 0xff;
+        }
+    } else {
+        memset(buffer.bytes, 0, sizeof(buffer.bytes) - 1);
+    }
+    buffer.state.newline = '\n';
 
     char *ptr = buffer.bytes;
     size_t rem = sizeof(buffer.bytes);
     while (rem > 0) {
-        ssize_t n = write(pipe, ptr, rem);
+        ssize_t n = write(fd, ptr, rem);
+        TRY(errno);
+
         ptr += n;
         rem -= n;
     }
-
-    return sizeof(buffer.bytes);
 }

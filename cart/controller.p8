@@ -2,12 +2,12 @@ pico-8 cartridge // http://www.pico-8.com
 version 36
 __lua__
 function _init()
-	poke(0x9a04, 0x0a)
+	printh"hello from pico-8!";
 end
 
 function _update()
-	printh"☉";
-	serial(0x804,0x9a00,5)
+	printh"☉☉";
+	serial(0x804,0x9a00,34)
 end
 
 function _draw()
