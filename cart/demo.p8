@@ -6,10 +6,9 @@ __lua__
 
 function _init()
 	printh"hello from pico-8!"
-	initctrl()
 end
 
-function _update60()
+function _update()
 	updatectrl()
 end
 
@@ -135,14 +134,9 @@ function _draw()
 	drawdbg()
 end
 
-function initctrl()
-	serial(0x807,0x9a1f,1)
-	flip()
-end
-
 function updatectrl()
-	serial(0x806,0x9a00,30)
-	serial(0x807,0x9a1f,1)
+	printh"☉0☉"
+	serial(0x804,0x9a00,30)
 end
 
 function drawctrl()
