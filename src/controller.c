@@ -1,58 +1,143 @@
-#include <stdbool.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
-
-#include <signal.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <unistd.h>
 
-static void device_create();
+#include <SDL.h>
+
+struct serialdevice {
+    Uint32 event;
+    FILE *clock;
+    FILE *data;
+};
+
+static int device_create(struct serialdevice *device);
+static void device_destroy(struct serialdevice *device);
+
+int clock_thread(void *data) {
+    struct serialdevice *device = (struct serialdevice *)data;
+
+    FILE *clock = device->clock;
+
+    SDL_Event event;
+    SDL_zero(event);
+    event.type = device->event;
+
+    while ((event.user.code = fgetc(clock)) != EOF) {
+        SDL_Log("got request!");
+        if (SDL_PushEvent(&event) < 0) {
+            SDL_Log("failed to push clock event: %s", SDL_GetError());
+        }
+    }
+
+    SDL_Log("finished!");
+    return 0;
+}
 
 int main(int argc, char **argv) {
-    printf("hello!\n");
+    int exitcode = EXIT_SUCCESS;
 
-    device_create();
+    struct serialdevice device = {0};
+    SDL_Thread *clock = NULL;
+    SDL_GameController *controller = NULL;
 
-    while (true) {
-        printf("...zZz...\n");
-        sleep(1);
+    if (SDL_Init(SDL_INIT_GAMECONTROLLER) != 0) {
+        fprintf(stderr, "ERROR: SDL initialization: %s\n", SDL_GetError());
+        exitcode = EXIT_FAILURE;
+        goto quit;
     }
 
-    return EXIT_SUCCESS;
-}
-
-static char template[] = "/tmp/p8-controller.XXXXXX";
-static char *dir = NULL;
-
-static void device_cleanup(void) {
-    printf("bye...\n");
-}
-
-static void device_sighandler(int signum) {
-    device_cleanup();
-    raise(signum);
-}
-
-static void device_setsighandler(int signum) {
-    struct sigaction oldaction = {0};
-    if (sigaction(signum, NULL, &oldaction) != 0) {
-        perror("ERROR: requesting existing sigaction");
+    if (device_create(&device) != 0) {
+        exitcode = EXIT_FAILURE;
+        goto quit;
     }
-    if (oldaction.sa_handler == SIG_IGN) {
+
+    if ((clock = SDL_CreateThread(clock_thread, "clock", &device)) == NULL) {
+        fprintf(stderr, "ERROR: clock creation: %s\n", SDL_GetError());
+        exitcode = EXIT_FAILURE;
+        goto quit;
+    }
+
+    SDL_Event event;
+    while (SDL_WaitEvent(&event)) {
+        if (event.type == SDL_QUIT) {
+            break;
+        }
+        if (event.type == device.event) {
+            SDL_Log("got event!");
+        }
+    }
+
+quit:
+    device_destroy(&device);
+
+    SDL_WaitThread(clock, NULL);
+    SDL_Quit();
+
+    return exitcode;
+}
+
+static FILE *openfifo(char const *path, char const *mode) {
+    if (mkfifo(path, S_IRUSR | S_IWUSR) != 0) {
+        perror("failed to create FIFO");
+        return NULL;
+    }
+
+    FILE *fifo = fopen(path, mode);
+    if (fifo == NULL) {
+        perror("failed to open FIFO");
+        if (remove(path) != 0) {
+            perror("failed to remove errored FIFO");
+        }
+        return NULL;
+    }
+
+    return fifo;
+}
+
+void closefifo(char const *path, FILE *fifo) {
+    if (fifo == NULL) {
         return;
     }
 
-    struct sigaction action = {0};
-    action.sa_handler = device_sighandler;
-    action.sa_flags = SA_RESETHAND | SA_NODEFER;
-    if (sigaction(signum, &action, NULL) != 0) {
-        perror("ERROR: setting signal handler");
+    if (fclose(fifo) != 0) {
+        perror("failed to close FIFO");
+    }
+    if (remove(path) != 0) {
+        perror("failed to remove FIFO");
     }
 }
 
-static void device_create() {
-    atexit(device_cleanup);
-    device_setsighandler(SIGHUP);
-    device_setsighandler(SIGINT);
-    device_setsighandler(SIGQUIT);
-    device_setsighandler(SIGTERM);
+static char clockpath[] = "controller.clock";
+static char datapath[] = "controller.data";
+
+int device_create(struct serialdevice *device) {
+    device->clock = openfifo(clockpath, "r");
+    if (device->clock == NULL) {
+        device_destroy(device);
+        return -1;
+    }
+
+    device->data = openfifo(datapath, "w");
+    if (device->data == NULL) {
+        device_destroy(device);
+        return -1;
+    }
+
+    device->event = SDL_RegisterEvents(1);
+    if (device->event == (Uint32)-1) {
+        device_destroy(device);
+        return -1;
+    }
+
+    return 0;
+}
+
+void device_destroy(struct serialdevice *device) {
+    closefifo(clockpath, device->clock);
+    closefifo(datapath, device->data);
+    *device = (struct serialdevice){0};
 }
