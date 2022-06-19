@@ -6,9 +6,10 @@ __lua__
 
 function _init()
 	printh"hello from pico-8!"
+	initctrl()
 end
 
-function _update()
+function _update60()
 	updatectrl()
 end
 
@@ -20,7 +21,7 @@ function _draw()
 		addr={
 			x=0x9a00,
 			y=0x9a02,
-			push=0x9a13,
+			push=0x9a16,
 		},
 		x=42,
 		y=96,
@@ -29,7 +30,7 @@ function _draw()
 		addr={
 			x=0x9a04,
 			y=0x9a06,
-			push=0x9a14,
+			push=0x9a17,
 		},
 		x=85,
 		y=96,
@@ -74,68 +75,74 @@ function _draw()
 	}
 	
 	drawbtn{
-		name="-",
-		addr=0x9a10,
-		x=50,
-		y=66,
-	}
-	drawbtn{
-		icon=0,
-		addr=0x9a11,
-		x=60,
-		y=66,
-	}
-	drawbtn{
-		name="+",
-		addr=0x9a12,
-		x=70,
-		y=66,
-	}
-	
-	drawbtn{
 		name="l",
-		addr=0x9a15,
+		addr=0x9a10,
 		x=27,
 		y=19,
 	}
 	drawbtn{
 		name="r",
-		addr=0x9a16,
+		addr=0x9a11,
 		x=94,
 		y=19,
 	}
 	
 	drawbtn{
+		name="-",
+		addr=0x9a14,
+		x=50,
+		y=66,
+	}
+	drawbtn{
+		name="+",
+		addr=0x9a15,
+		x=70,
+		y=66,
+	}
+	
+	drawbtn{
 		icon=9,
-		addr=0x9a17,
+		addr=0x9a18,
 		x=27,
 		y=49,
 	}
 	drawbtn{
 		icon=10,
-		addr=0x9a18,
+		addr=0x9a19,
 		x=27,
 		y=69,
 	}
 	drawbtn{
 		icon=11,
-		addr=0x9a19,
+		addr=0x9a1a,
 		x=17,
 		y=59,
 	}
 	drawbtn{
 		icon=12,
-		addr=0x9a1a,
+		addr=0x9a1b,
 		x=37,
 		y=59,
 	}
 	
-	--drawdbg()
+	drawbtn{
+		icon=0,
+		addr=0x9a1c,
+		x=60,
+		y=66,
+	}
+	
+	drawdbg()
+end
+
+function initctrl()
+	serial(0x807,0x9a1f,1)
+	flip()
 end
 
 function updatectrl()
-	printh"☉☉"
-	serial(0x804,0x9a00,34)
+	serial(0x806,0x9a00,30)
+	serial(0x807,0x9a1f,1)
 end
 
 function drawctrl()

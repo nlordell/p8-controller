@@ -1,4 +1,6 @@
 #include <errno.h>
+#include <stdatomic.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,135 +11,269 @@
 #include <SDL.h>
 
 struct serialdevice {
-    Uint32 event;
     FILE *clock;
     FILE *data;
 };
 
-static int device_create(struct serialdevice *device);
-static void device_destroy(struct serialdevice *device);
+static int device_init(void);
+static void device_quit(void);
 
-int clock_thread(void *data) {
-    struct serialdevice *device = (struct serialdevice *)data;
+static int device_connect(struct serialdevice *device);
+static void device_close(struct serialdevice *device);
 
-    FILE *clock = device->clock;
+#define NCONTROLLERS 8
+struct controllers {
+    atomic_flag updated;
+    SDL_GameController *handles[NCONTROLLERS];
+};
 
-    SDL_Event event;
-    SDL_zero(event);
-    event.type = device->event;
+static struct controllers *controllers_init(void);
+static void controllers_queueupdate(struct controllers *controllers);
+static int controllers_write(struct controllers *controllers, int index, FILE *data);
 
-    while ((event.user.code = fgetc(clock)) != EOF) {
-        SDL_Log("got request!");
-        if (SDL_PushEvent(&event) < 0) {
-            SDL_Log("failed to push clock event: %s", SDL_GetError());
+int handler_thread(void *data) {
+    struct serialdevice device = {0};
+    struct controllers *controllers = (struct controllers *)data;
+
+    SDL_Event quit = {0};
+    quit.type = SDL_QUIT;
+
+    while (true) {
+        SDL_Log("connecting serial device...");
+        if (device_connect(&device) != 0) {
+            SDL_PushEvent(&quit);
+            break;
         }
+        SDL_Log("connected serial device");
+
+        int index;
+        while ((index = fgetc(device.clock)) != EOF) {
+            SDL_Log("query controller %d", index);
+            if (controllers_write(controllers, index, device.data) != 0) {
+                break;
+            }
+        }
+
+        device_close(&device);
+        SDL_Log("disconnected serial device");
     }
 
-    SDL_Log("finished!");
     return 0;
 }
 
 int main(int argc, char **argv) {
-    int exitcode = EXIT_SUCCESS;
-
-    struct serialdevice device = {0};
-    SDL_Thread *clock = NULL;
-    SDL_GameController *controller = NULL;
+    if (device_init() != 0) {
+        exit(EXIT_FAILURE);
+    }
+    atexit(device_quit);
 
     if (SDL_Init(SDL_INIT_GAMECONTROLLER) != 0) {
         fprintf(stderr, "ERROR: SDL initialization: %s\n", SDL_GetError());
-        exitcode = EXIT_FAILURE;
-        goto quit;
+        exit(EXIT_FAILURE);
     }
+    atexit(SDL_Quit);
 
-    if (device_create(&device) != 0) {
-        exitcode = EXIT_FAILURE;
-        goto quit;
-    }
+    struct controllers *controllers = controllers_init();
 
-    if ((clock = SDL_CreateThread(clock_thread, "clock", &device)) == NULL) {
-        fprintf(stderr, "ERROR: clock creation: %s\n", SDL_GetError());
-        exitcode = EXIT_FAILURE;
-        goto quit;
+    SDL_Thread *handler = SDL_CreateThread(handler_thread, "handler", controllers);
+    if (handler == NULL) {
+        fprintf(stderr, "ERROR: handler thread creation: %s\n", SDL_GetError());
+        exit(EXIT_FAILURE);
     }
+    SDL_DetachThread(handler);
 
     SDL_Event event;
     while (SDL_WaitEvent(&event)) {
-        if (event.type == SDL_QUIT) {
+        switch (event.type) {
+        case SDL_QUIT:
+            goto quit;
+        case SDL_CONTROLLERDEVICEADDED:
+        case SDL_CONTROLLERDEVICEREMOVED:
+            controllers_queueupdate(controllers);
             break;
         }
-        if (event.type == device.event) {
-            SDL_Log("got event!");
-        }
     }
-
 quit:
-    device_destroy(&device);
 
-    SDL_WaitThread(clock, NULL);
-    SDL_Quit();
-
-    return exitcode;
-}
-
-static FILE *openfifo(char const *path, char const *mode) {
-    if (mkfifo(path, S_IRUSR | S_IWUSR) != 0) {
-        perror("failed to create FIFO");
-        return NULL;
-    }
-
-    FILE *fifo = fopen(path, mode);
-    if (fifo == NULL) {
-        perror("failed to open FIFO");
-        if (remove(path) != 0) {
-            perror("failed to remove errored FIFO");
-        }
-        return NULL;
-    }
-
-    return fifo;
-}
-
-void closefifo(char const *path, FILE *fifo) {
-    if (fifo == NULL) {
-        return;
-    }
-
-    if (fclose(fifo) != 0) {
-        perror("failed to close FIFO");
-    }
-    if (remove(path) != 0) {
-        perror("failed to remove FIFO");
-    }
+    return EXIT_SUCCESS;
 }
 
 static char clockpath[] = "controller.clock";
 static char datapath[] = "controller.data";
 
-int device_create(struct serialdevice *device) {
-    device->clock = openfifo(clockpath, "r");
-    if (device->clock == NULL) {
-        device_destroy(device);
+int device_init(void) {
+    if (mkfifo(clockpath, S_IRUSR | S_IWUSR) != 0) {
+        perror("ERROR: failed to create clock FIFO");
+        return -1;
+    }
+    if (mkfifo(datapath, S_IRUSR | S_IWUSR) != 0) {
+        perror("ERROR: failed to create data FIFO");
+        if (remove(clockpath) != 0) {
+            perror("ERROR: failed to remove clock FIFO");
+        }
         return -1;
     }
 
-    device->data = openfifo(datapath, "w");
-    if (device->data == NULL) {
-        device_destroy(device);
+    printf("Device initialized. Start PICO-8 with:\n    pico8 -o %s -i %s\n", clockpath, datapath);
+
+    return 0;
+}
+
+void device_quit(void) {
+    if (remove(clockpath) != 0) {
+        perror("ERROR: failed to remove clock FIFO");
+    }
+    if (remove(datapath) != 0) {
+        perror("ERROR: failed to remove data FIFO");
+    }
+}
+
+int device_connect(struct serialdevice *device) {
+    FILE *clock = fopen(clockpath, "r");
+    if (clock == NULL) {
+        perror("ERROR: failed to open clock FIFO");
         return -1;
     }
 
-    device->event = SDL_RegisterEvents(1);
-    if (device->event == (Uint32)-1) {
-        device_destroy(device);
+    FILE *data = fopen(datapath, "w");
+    if (data == NULL) {
+        perror("ERROR: failed to open clock FIFO");
+        if (fclose(clock) != 0) {
+            perror("ERROR: failed to close clock FIFO");
+        }
+        return -1;
+    }
+
+    device->clock = clock;
+    device->data = data;
+    return 0;
+}
+
+void device_close(struct serialdevice *device) {
+    if (device->clock != NULL && fclose(device->clock) != 0) {
+        perror("ERROR: failed to close clock FIFO");
+    }
+    if (device->data != NULL && fclose(device->data) != 0) {
+        perror("ERROR: failed to close data FIFO");
+    }
+    *device = (struct serialdevice){0};
+}
+
+struct controllers *controllers_init(void) {
+    struct controllers *controllers = malloc(sizeof(struct controllers));
+
+    controllers->updated = (atomic_flag)ATOMIC_FLAG_INIT;
+    for (int i = 0; i < NCONTROLLERS; ++i) {
+        controllers->handles[i] = NULL;
+    }
+
+    return controllers;
+}
+
+#define NAXES 6
+static const SDL_GameControllerAxis axes[NAXES] = {
+    SDL_CONTROLLER_AXIS_LEFTX,
+    SDL_CONTROLLER_AXIS_LEFTY,
+    SDL_CONTROLLER_AXIS_RIGHTX,
+    SDL_CONTROLLER_AXIS_RIGHTY,
+    SDL_CONTROLLER_AXIS_TRIGGERLEFT,
+    SDL_CONTROLLER_AXIS_TRIGGERRIGHT,
+};
+
+#define NBUTTONS 18
+static const SDL_GameControllerButton buttons[NBUTTONS] = {
+    SDL_CONTROLLER_BUTTON_A,
+    SDL_CONTROLLER_BUTTON_B,
+    SDL_CONTROLLER_BUTTON_X,
+    SDL_CONTROLLER_BUTTON_Y,
+    SDL_CONTROLLER_BUTTON_LEFTSHOULDER,
+    SDL_CONTROLLER_BUTTON_RIGHTSHOULDER,
+    SDL_CONTROLLER_BUTTON_INVALID,
+    SDL_CONTROLLER_BUTTON_INVALID,
+    SDL_CONTROLLER_BUTTON_BACK,
+    SDL_CONTROLLER_BUTTON_START,
+    SDL_CONTROLLER_BUTTON_LEFTSTICK,
+    SDL_CONTROLLER_BUTTON_RIGHTSTICK,
+    SDL_CONTROLLER_BUTTON_DPAD_UP,
+    SDL_CONTROLLER_BUTTON_DPAD_DOWN,
+    SDL_CONTROLLER_BUTTON_DPAD_LEFT,
+    SDL_CONTROLLER_BUTTON_DPAD_RIGHT,
+    SDL_CONTROLLER_BUTTON_GUIDE,
+    SDL_CONTROLLER_BUTTON_INVALID,
+};
+
+#define NAXISBUTTONS 2
+#define AXISBUTTON_THRESHOLD 30000
+static const struct {
+    int index;
+    SDL_GameControllerAxis axis;
+} axisbuttons[NAXISBUTTONS] = {
+    {6, SDL_CONTROLLER_AXIS_TRIGGERLEFT},
+    {7, SDL_CONTROLLER_AXIS_TRIGGERRIGHT},
+};
+
+int controllers_write(struct controllers *controllers, int index, FILE *data) {
+    if (atomic_flag_test_and_set(&controllers->updated) == false) {
+        for (int i = 0; i < NCONTROLLERS; ++i) {
+            SDL_GameControllerClose(controllers->handles[i]);
+            controllers->handles[i] = NULL;
+        }
+
+        SDL_GameController *handle;
+        for (int i = 0; i < SDL_NumJoysticks(); ++i) {
+            if (!SDL_IsGameController(i)) {
+                continue;
+            }
+
+            handle = SDL_GameControllerOpen(i);
+            if (handle == NULL) {
+                fprintf(stderr, "ERROR: failed opening controller %d: %s\n", i, SDL_GetError());
+                continue;
+            }
+
+            controllers->handles[i] = handle;
+        }
+    }
+
+    index = index == '\n' ? 0 : index; // fasciliate debugging.
+    SDL_GameController *handle = index >= 0 && index < NCONTROLLERS
+        ? controllers->handles[index]
+        : NULL;
+
+    struct {
+        Sint16 axis[NAXES];
+        Uint8 button[NBUTTONS];
+    } state;
+
+    if (handle != NULL) {
+        for (int i = 0; i < NAXES; ++i) {
+            state.axis[i] = SDL_GameControllerGetAxis(handle, axes[i]);
+        }
+        for (int i = 0; i < NBUTTONS; ++i) {
+            state.button[i] = buttons[i] != SDL_CONTROLLER_BUTTON_INVALID
+                ? SDL_GameControllerGetButton(handle, buttons[i]) * 0xff
+                : 0;
+        }
+        for (int i = 0; i < NAXISBUTTONS; ++i) {
+            bool pressed = SDL_GameControllerGetAxis(handle, axisbuttons[i].axis) > AXISBUTTON_THRESHOLD;
+            state.button[axisbuttons[i].index] = pressed * 0xff;
+        }
+    } else {
+        memset(&state, 0, sizeof(state));
+    }
+
+    if (fwrite(&state, sizeof(state), 1, data) != 1) {
+        perror("ERROR: failed writing to data line");
+        return -1;
+    }
+    if (fflush(data) != 0) {
+        perror("ERROR: failed to flush data line");
         return -1;
     }
 
     return 0;
 }
 
-void device_destroy(struct serialdevice *device) {
-    closefifo(clockpath, device->clock);
-    closefifo(datapath, device->data);
-    *device = (struct serialdevice){0};
+void controllers_queueupdate(struct controllers *controllers) {
+    atomic_flag_clear(&controllers->updated);
 }
