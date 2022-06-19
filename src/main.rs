@@ -10,6 +10,8 @@ use std::{
     process::{Command, Stdio},
 };
 
+use crate::sdl::{GameControllerAxis, GameControllerButton};
+
 type Result<T, E = Box<dyn Error>> = std::result::Result<T, E>;
 
 fn main() -> Result<()> {
@@ -37,9 +39,9 @@ fn main() -> Result<()> {
                 continue;
             }
         };
-        let controller = controllers.handle(device_index)?;
+        let state = controllers.state(device_index)?;
 
-        data.write_all(&[0xff; 30])?;
+        data.write_all(&state)?;
         data.flush()?;
     }
 
@@ -47,7 +49,7 @@ fn main() -> Result<()> {
 }
 
 fn request(line: &str) -> Option<usize> {
-    line.strip_prefix("☉")?.strip_suffix("☉\n")?.parse().ok()
+    line.strip_prefix('☉')?.strip_suffix("☉\n")?.parse().ok()
 }
 
 struct Controllers<'a> {
@@ -66,6 +68,7 @@ impl<'a> Controllers<'a> {
     fn handle(&mut self, device_index: usize) -> Result<Option<&GameController>> {
         let sdl = self.sdl;
 
+        sdl.game_controller_update();
         if !sdl.is_game_controller(device_index) {
             return Ok(None);
         }
@@ -76,5 +79,57 @@ impl<'a> Controllers<'a> {
         self.handles[device_index] = Some(sdl.game_controller_open(device_index)?);
 
         Ok(self.handles[device_index].as_ref())
+    }
+
+    fn state(&mut self, device_index: usize) -> Result<[u8; 30]> {
+        let handle = match self.handle(device_index)? {
+            Some(value) => value,
+            None => return Ok(Default::default()),
+        };
+
+        let mut buffer = [0_u8; 30];
+        {
+            let mut cursor = &mut buffer[..];
+            for axis in [
+                GameControllerAxis::LeftX,
+                GameControllerAxis::LeftY,
+                GameControllerAxis::RightX,
+                GameControllerAxis::RightY,
+                GameControllerAxis::TriggerLeft,
+                GameControllerAxis::TriggerRight,
+            ] {
+                cursor.write_all(&handle.axis(axis).to_le_bytes()).unwrap();
+            }
+            for button in [
+                (Some(GameControllerButton::A), None),
+                (Some(GameControllerButton::B), None),
+                (Some(GameControllerButton::X), None),
+                (Some(GameControllerButton::Y), None),
+                (Some(GameControllerButton::LeftShoulder), None),
+                (Some(GameControllerButton::RightShoulder), None),
+                (None, Some(GameControllerAxis::TriggerLeft)),
+                (None, Some(GameControllerAxis::TriggerLeft)),
+                (Some(GameControllerButton::Back), None),
+                (Some(GameControllerButton::Start), None),
+                (Some(GameControllerButton::LeftStick), None),
+                (Some(GameControllerButton::RightStick), None),
+                (Some(GameControllerButton::DpadUp), None),
+                (Some(GameControllerButton::DpadDown), None),
+                (Some(GameControllerButton::DpadLeft), None),
+                (Some(GameControllerButton::DpadRight), None),
+                (Some(GameControllerButton::Guide), None),
+                (None, None),
+            ] {
+                let pressed = match button {
+                    (Some(button), None) => handle.button(button),
+                    (None, Some(button)) => handle.axis(button) > 30000,
+                    _ => false,
+                };
+                cursor.write_all(&[(pressed as u8) * 0xff]).unwrap();
+            }
+            debug_assert!(cursor.is_empty());
+        }
+
+        Ok(buffer)
     }
 }

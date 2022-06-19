@@ -14,13 +14,13 @@ mod ffi {
     pub type SDL_bool = c_int;
     pub type SDL_JoystickID = i32;
 
+    #[repr(C)]
     pub struct SDL_GameController {
         _opaque: [u8; 0],
     }
 
-    pub struct SDL_Joystick {
-        _opaque: [u8; 0],
-    }
+    type SDL_GameControllerAxis = super::GameControllerAxis;
+    type SDL_GameControllerButton = super::GameControllerButton;
 
     extern "C" {
         pub fn SDL_Init(_: u32) -> c_int;
@@ -28,15 +28,18 @@ mod ffi {
 
         pub fn SDL_GetError() -> *const c_char;
 
-        pub fn SDL_NumJoysticks() -> c_int;
-        pub fn SDL_JoystickGetDeviceInstanceID(_: c_int) -> SDL_JoystickID;
-        pub fn SDL_JoystickInstanceID(_: *mut SDL_Joystick) -> SDL_JoystickID;
-
         pub fn SDL_IsGameController(_: c_int) -> SDL_bool;
-        pub fn SDL_GameControllerFromInstanceID(_: SDL_JoystickID) -> *mut SDL_GameController;
-        pub fn SDL_GameControllerGetJoystick(_: *mut SDL_GameController) -> *mut SDL_Joystick;
         pub fn SDL_GameControllerOpen(_: c_int) -> *mut SDL_GameController;
         pub fn SDL_GameControllerClose(_: *mut SDL_GameController);
+        pub fn SDL_GameControllerUpdate();
+        pub fn SDL_GameControllerGetAxis(
+            _: *mut SDL_GameController,
+            _: SDL_GameControllerAxis,
+        ) -> i16;
+        pub fn SDL_GameControllerGetButton(
+            _: *mut SDL_GameController,
+            _: SDL_GameControllerButton,
+        ) -> SDL_bool;
     }
 }
 
@@ -59,6 +62,11 @@ impl Sdl {
     pub fn game_controller_open(&self, device_index: usize) -> Result<GameController, Error> {
         let handle = resp(unsafe { ffi::SDL_GameControllerOpen(device_index as _) })?;
         Ok(GameController { handle })
+    }
+
+    /// Updates game controller state.
+    pub fn game_controller_update(&self) {
+        unsafe { ffi::SDL_GameControllerUpdate() };
     }
 }
 
@@ -85,10 +93,59 @@ pub struct GameController {
     handle: NonNull<ffi::SDL_GameController>,
 }
 
+impl GameController {
+    /// Gets the value of a game controller axis.
+    pub fn axis(&self, axis: GameControllerAxis) -> i16 {
+        unsafe { ffi::SDL_GameControllerGetAxis(self.handle.as_ptr(), axis) }
+    }
+
+    /// Gets the pressed state of a game controller button.
+    pub fn button(&self, button: GameControllerButton) -> bool {
+        unsafe { ffi::SDL_GameControllerGetButton(self.handle.as_ptr(), button) != 0 }
+    }
+}
+
 impl Drop for GameController {
     fn drop(&mut self) {
         unsafe { ffi::SDL_GameControllerClose(self.handle.as_ptr()) };
     }
+}
+
+/// A game controller axis.
+#[repr(C)]
+pub enum GameControllerAxis {
+    LeftX = 0,
+    LeftY = 1,
+    RightX = 2,
+    RightY = 3,
+    TriggerLeft = 4,
+    TriggerRight = 5,
+}
+
+/// A game controller button.
+#[repr(C)]
+pub enum GameControllerButton {
+    A = 0,
+    B = 1,
+    X = 2,
+    Y = 3,
+    Back = 4,
+    Guide = 5,
+    Start = 6,
+    LeftStick = 7,
+    RightStick = 8,
+    LeftShoulder = 9,
+    RightShoulder = 10,
+    DpadUp = 11,
+    DpadDown = 12,
+    DpadLeft = 13,
+    DpadRight = 14,
+    _Misc1 = 15,
+    _Paddle1 = 16,
+    _Paddle2 = 17,
+    _Paddle3 = 18,
+    _Paddle4 = 19,
+    _Touchpad = 20,
 }
 
 /// An SDL error.

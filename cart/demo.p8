@@ -8,7 +8,7 @@ function _init()
 	printh"hello from pico-8!"
 end
 
-function _update()
+function _update60()
 	updatectrl()
 end
 

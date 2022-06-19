@@ -52,7 +52,7 @@ struct controller {
 
 static void controller_writestate(struct controller *c, int fd);
 
-static char const marker[] = u8"☉☉\n";
+static char const marker[] = u8"☉0☉\n";
 
 int main(int argc, char **argv) {
     char *pico8_args[argc + 1];
