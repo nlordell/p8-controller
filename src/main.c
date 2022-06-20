@@ -1,14 +1,8 @@
-#include <stdatomic.h>
-#include <stdbool.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-
+#include <assert.h>
 #include <errno.h>
 #include <signal.h>
 #include <spawn.h>
-#include <string.h>
-#include <time.h>
+#include <stdbool.h>
 #include <unistd.h>
 
 #include <SDL.h>
@@ -30,31 +24,23 @@
 
 struct process {
     pid_t pid;
-    int in;
-    int out;
+    FILE *in;
+    FILE *out;
 };
 
 static struct process process_spawn(char * const *argv);
+static void process_wait(struct process *p);
 
-struct reader {
-    int fd;
-    size_t len;
-    size_t pos;
-    char buffer[1024];
+#define NCONTROLLERS 8
+struct controllers {
+    SDL_GameController *handles[NCONTROLLERS];
 };
 
-static struct reader reader_init(int fd);
-static size_t reader_readline(struct reader *r, char *buffer, size_t buflen, bool *truncated);
+static int controller_parseindex(char const *b, size_t len);
+static void controller_writestate(struct controllers *c, int device_index, FILE *f);
+static void controller_close(struct controllers *c);
 
-struct controller {
-    SDL_GameController *handle;
-};
-
-static void controller_writestate(struct controller *c, int fd);
-
-static char const marker[] = u8"☉0☉\n";
-
-int main(int argc, char **argv) {
+int main(int argc, char *argv[]) {
     char *pico8_args[argc + 1];
     pico8_args[0] = "pico8";
     for (int i = 1; i < argc; ++i) {
@@ -65,41 +51,34 @@ int main(int argc, char **argv) {
     if (SDL_Init(SDL_INIT_GAMECONTROLLER) < 0) {
         PANIC(SDL_GetError());
     }
+    atexit(SDL_Quit);
 
     struct process pico8 = process_spawn(pico8_args);
-    struct reader reader = reader_init(pico8.out);
-    struct controller controller = {0};
+    struct controllers controllers = {0};
 
-    char buffer[1024];
-    size_t len;
-    bool truncated;
-    while ((len = reader_readline(&reader, buffer, sizeof(buffer), &truncated)) > 0) {
-        if (len == sizeof(marker)-1 && memcmp(buffer, marker, len) == 0) {
-            controller_writestate(&controller, pico8.in);
+    ssize_t len;
+    char *buffer = NULL;
+    size_t n;
+    while ((len = getline(&buffer, &n, pico8.out)) > 0) {
+        int device_index = controller_parseindex(buffer, len);
+        if (device_index >= 0) {
+            controller_writestate(&controllers, device_index, pico8.in);
         } else {
             fwrite(buffer, sizeof(char), len, stdout);
             TRY(ferror(stdout));
-            while (truncated) {
-                if ((len = reader_readline(&reader, buffer, sizeof(buffer), &truncated)) == 0) {
-                    goto eof;
-                }
-                fwrite(buffer, sizeof(char), len, stdout);
-                TRY(ferror(stdout));
-            }
         }
     }
-eof:
 
-    if (waitpid(pico8.pid, NULL, 0) != pico8.pid) {
-        TRY(errno);
-    }
+    process_wait(&pico8);
+    controller_close(&controllers);
+    free(buffer);
 
     return EXIT_SUCCESS;
 }
 
 extern char **environ;
 
-struct process process_spawn(char *const *argv) {
+struct process process_spawn(char * const *argv) {
     const int R = 0;
     const int W = 1;
 
@@ -132,110 +111,148 @@ struct process process_spawn(char *const *argv) {
     pid_t pid;
     TRY(posix_spawnp(&pid, argv[0], &file_actions, &attr, argv, environ));
 
+    FILE *fin = fdopen(in[W], "w");
+    TRY(fin == NULL);
+    FILE *fout = fdopen(out[R], "r");
+    TRY(fout == NULL);
+
     close(in[R]);
     close(out[W]);
     posix_spawn_file_actions_destroy(&file_actions);
     posix_spawnattr_destroy(&attr);
 
-    return (struct process){
-        .pid = pid,
-        .in = in[W],
-        .out = out[R],
-    };
+    return (struct process){pid, fin, fout};
 }
 
-struct reader reader_init(int fd) {
-    return (struct reader) {
-        .fd = fd,
-        .pos = 0,
-        .len = 0,
-    };
+void process_wait(struct process *p) {
+    if (waitpid(p->pid, NULL, 0) != p->pid) {
+        TRY(errno);
+    }
+    TRY(fclose(p->in));
+    TRY(fclose(p->out));
+
+    *p = (struct process){0};
 }
 
-size_t reader_readline(struct reader *r, char *buffer, size_t buflen, bool *truncated) {
-    int i = 0;
-    bool tr = true;
-    while (i < buflen) {
-        if (r->pos == r->len) {
-            ssize_t n = read(r->fd, r->buffer, sizeof(r->buffer));
-            TRY(n < 0);
+int controller_parseindex(char const *s, size_t len) {
+    // parse controller request of the form: "☉$INDEX☉\n"
 
-            r->pos = 0;
-            r->len = n;
-        }
-
-        if (r->len == 0) {
-            break;
-        }
-
-        char next = r->buffer[r->pos++];
-        buffer[i++] = next;
-
-        if (next == '\n') {
-            tr = false;
-            break;
-        }
+    char marker[] = u8"☉0☉\n";
+    if (len != sizeof(marker) - 1) {
+        return -1;
     }
 
-    if (truncated != NULL) {
-        *truncated = tr;
+    size_t i = sizeof(u8"☉") - 1;
+    marker[i] = s[i];
+    if (memcmp(s, marker, len) != 0) {
+        return -1;
     }
-    return i;
+
+    char index = marker[i];
+    if (index < '0' || index >= '0' + NCONTROLLERS) {
+        return -1;
+    }
+
+    return index - '0';
 }
 
-static bool controller_open(struct controller *c) {
-    if (!SDL_GameControllerGetAttached(c->handle)) {
-        if (c->handle != NULL) {
-            SDL_GameControllerClose(c->handle);
-            c->handle = NULL;
-        }
+#define NAXES 6
+static const SDL_GameControllerAxis axes[NAXES] = {
+    SDL_CONTROLLER_AXIS_LEFTX,
+    SDL_CONTROLLER_AXIS_LEFTY,
+    SDL_CONTROLLER_AXIS_RIGHTX,
+    SDL_CONTROLLER_AXIS_RIGHTY,
+    SDL_CONTROLLER_AXIS_TRIGGERLEFT,
+    SDL_CONTROLLER_AXIS_TRIGGERRIGHT,
+};
 
-        int joysticks = SDL_NumJoysticks();
-        for (int i = 0; i < joysticks && c->handle == NULL; ++i) {
-            if (SDL_IsGameController(i)) {
-                c->handle = SDL_GameControllerOpen(i);
-            }
-        }
+#define NBUTTONS 18
+static const SDL_GameControllerButton buttons[NBUTTONS] = {
+    SDL_CONTROLLER_BUTTON_A,
+    SDL_CONTROLLER_BUTTON_B,
+    SDL_CONTROLLER_BUTTON_X,
+    SDL_CONTROLLER_BUTTON_Y,
+    SDL_CONTROLLER_BUTTON_LEFTSHOULDER,
+    SDL_CONTROLLER_BUTTON_RIGHTSHOULDER,
+    SDL_CONTROLLER_BUTTON_INVALID,
+    SDL_CONTROLLER_BUTTON_INVALID,
+    SDL_CONTROLLER_BUTTON_BACK,
+    SDL_CONTROLLER_BUTTON_START,
+    SDL_CONTROLLER_BUTTON_LEFTSTICK,
+    SDL_CONTROLLER_BUTTON_RIGHTSTICK,
+    SDL_CONTROLLER_BUTTON_DPAD_UP,
+    SDL_CONTROLLER_BUTTON_DPAD_DOWN,
+    SDL_CONTROLLER_BUTTON_DPAD_LEFT,
+    SDL_CONTROLLER_BUTTON_DPAD_RIGHT,
+    SDL_CONTROLLER_BUTTON_GUIDE,
+    SDL_CONTROLLER_BUTTON_INVALID,
+};
 
-        if (c->handle == NULL) {
-            return false;
-        }
-    }
+#define NAXISBUTTONS 2
+#define AXISBUTTON_THRESHOLD 30000
+static const struct {
+    int index;
+    SDL_GameControllerAxis axis;
+} axisbuttons[NAXISBUTTONS] = {
+    {6, SDL_CONTROLLER_AXIS_TRIGGERLEFT},
+    {7, SDL_CONTROLLER_AXIS_TRIGGERRIGHT},
+};
+
+static SDL_GameController *controller_open(struct controllers *c, int i) {
+    assert(i >= 0 && i < NCONTROLLERS);
 
     SDL_GameControllerUpdate();
-    return true;
+    if (SDL_IsGameController(i) == SDL_FALSE) {
+        return NULL;
+    }
+
+    // SDL uses reference-counted controller objects. Abuse this and always open
+    // a new handle, then free the old one. This ensures our controllers array
+    // always has up to date handles without having to deal with SDL events
+    // which would require a separate thread.
+    SDL_GameController *handle = SDL_GameControllerOpen(i);
+    if (handle == NULL) {
+        PANIC(SDL_GetError());
+    }
+
+    SDL_GameControllerClose(c->handles[i]);
+    c->handles[i] = handle;
+
+    return handle;
 }
 
-void controller_writestate(struct controller *c, int fd) {
-    union {
-        struct {
-            int16_t axis[SDL_CONTROLLER_AXIS_MAX];
-            uint8_t button[SDL_CONTROLLER_BUTTON_MAX];
-            char newline;
-        } state;
-        char bytes[34];
-    } buffer;
-    _Static_assert(sizeof(buffer.bytes) == sizeof(buffer.state), "too many buttons");
+void controller_writestate(struct controllers *c, int device_index, FILE *f) {
+    struct {
+        Sint16 axis[NAXES];
+        Uint8 button[NBUTTONS];
+    } state;
 
-    if (controller_open(c)) {
-        for (int i = 0; i < SDL_CONTROLLER_AXIS_MAX; ++i) {
-            buffer.state.axis[i] = SDL_GameControllerGetAxis(c->handle, i);
+    SDL_GameController *handle = controller_open(c, device_index);
+    if (handle != NULL) {
+        for (int i = 0; i < NAXES; ++i) {
+            state.axis[i] = SDL_GameControllerGetAxis(handle, axes[i]);
         }
-        for (int i = 0; i < SDL_CONTROLLER_BUTTON_MAX; ++i) {
-            buffer.state.button[i] = SDL_GameControllerGetButton(c->handle, i) * 0xff;
+        for (int i = 0; i < NBUTTONS; ++i) {
+            state.button[i] = buttons[i] != SDL_CONTROLLER_BUTTON_INVALID
+                ? SDL_GameControllerGetButton(handle, buttons[i]) * 0xff
+                : 0;
+        }
+        for (int i = 0; i < NAXISBUTTONS; ++i) {
+            bool pressed = SDL_GameControllerGetAxis(handle, axisbuttons[i].axis) > AXISBUTTON_THRESHOLD;
+            state.button[axisbuttons[i].index] = pressed * 0xff;
         }
     } else {
-        memset(buffer.bytes, 0, sizeof(buffer.bytes) - 1);
+        memset(&state, 0, sizeof(state));
     }
-    buffer.state.newline = '\n';
 
-    char *ptr = buffer.bytes;
-    size_t rem = sizeof(buffer.bytes);
-    while (rem > 0) {
-        ssize_t n = write(fd, ptr, rem);
-        TRY(n < 0);
+    fwrite(&state, sizeof(state), 1, f);
+    fflush(f);
 
-        ptr += n;
-        rem -= n;
+    TRY(ferror(f));
+}
+
+void controller_close(struct controllers *c) {
+    for (int i = 0; i < NCONTROLLERS; ++i) {
+        SDL_GameControllerClose(c->handles[i]);
     }
 }
