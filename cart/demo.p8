@@ -49,25 +49,25 @@ function _draw()
 	}
 	
 	drawbtn{
-		name="b",
+		name="a",
 		addr=0x9a0c,
 		x=94,
 		y=69,
 	}
 	drawbtn{
-		name="a",
+		name="b",
 		addr=0x9a0d,
 		x=104,
 		y=59,
 	}
 	drawbtn{
-		name="y",
+		name="x",
 		addr=0x9a0e,
 		x=84,
 		y=59,
 	}
 	drawbtn{
-		name="x",
+		name="y",
 		addr=0x9a0f,
 		x=94,
 		y=49,
