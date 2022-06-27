@@ -1,0 +1,43 @@
+diff --git a/cart/poom/poom_main_mini.lua b/cart/poom/poom_main_mini.lua
+index 11ed411..ce36c0f 100644
+--- a/cart/poom/poom_main_mini.lua
++++ b/cart/poom/poom_main_mini.lua
+@@ -662,16 +662,16 @@ _wp_hud,_btns=wp_switch(i),{}
+ end
+ end
+ else
+-if stat(38)!=0 then
+-da+=stat(38)/_mouse_acc
++if abs(%0x9a04)>0x400 then
++da+=%0x9a04/0x400/_mouse_acc
+ daf=0.2
+ else
+ if btn(🅾️) then
+ if(_btns[0]) dx=1
+ if(_btns[1]) dx=-1
+ else
+-if(_btns[0]) da-=0.75
+-if(_btns[1]) da+=0.75
++if(_btns[0]) dx+=0.75
++if(_btns[1]) dx-=0.75
+ end
+ end
+ if(_btns[_btnup]) dz=1
+@@ -883,6 +883,8 @@ fillp(0xaaaa)
+ next_state(play_state)
+ end
+ function _update()
++printh"☉0☉"
++serial(0x804,0x9a00,30)
+ for p,mask in pairs{[0]=0,0x10} do
+ for i=0,5 do
+ _btns[mask|i]=btnp(i,p) or _btns[mask|i] and btn(i,p)
+@@ -1049,7 +1051,7 @@ end
+ end,
+ function(item)
+ return function(owner,weapon)
+-if not _wp_hud and not _loading and btn(_btnfire) then
++if not _wp_hud and not _loading and (btn(_btnfire) or @0x9a11|@0x9a13!=0) then
+ local inventory,ammotype,newqty=owner.inventory,item.ammotype,0
+ if(ammotype) newqty=inventory[ammotype]-item.ammouse
+ if newqty>=0 then

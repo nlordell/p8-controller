@@ -17,5 +17,9 @@ target/demo.html: cart/demo.p8 target/p8-controller.js
 	sed 's|</body>|<script src="p8-controller.js"></script></body>|' $@ > target/sed.html
 	mv target/sed.html $@
 
+.PHONY: poom
+poom: target/p8-controller
+	target/p8-controller -root_path cart/poom -run cart/poom/poom_0.p8
+
 clean:
 	rm -rf target
