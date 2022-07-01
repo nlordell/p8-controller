@@ -1,9 +1,7 @@
-pico8_gpio[0] = 0x9a;
-
-function p8_controller() {
+(function p8_controller() {
   const gamepads = [...navigator.getGamepads() ?? []].slice(0, 4);
 
-  let ptr = 1;
+  let ptr = 0;
   function putd(value) {
     const int = Math.max(Math.min(~~(value * 0x8000), 0x7fff), -0x8000);
     putc(int);
@@ -25,6 +23,7 @@ function p8_controller() {
     pico8_gpio[ptr++] = value & 0xff;
   }
 
+  putc(0x9a);
   putc(gamepads.length);
   for (const gamepad of gamepads) {
     if (gamepad === null || gamepad.mapping !== "standard") {
@@ -47,5 +46,4 @@ function p8_controller() {
   }
 
   requestAnimationFrame(p8_controller);
-}
-requestAnimationFrame(p8_controller);
+})();

@@ -1,5 +1,5 @@
 diff --git a/cart/poom/poom_main_mini.lua b/cart/poom/poom_main_mini.lua
-index 11ed411..ce36c0f 100644
+index 11ed411..87dfbe3 100644
 --- a/cart/poom/poom_main_mini.lua
 +++ b/cart/poom/poom_main_mini.lua
 @@ -662,16 +662,16 @@ _wp_hud,_btns=wp_switch(i),{}
@@ -23,16 +23,28 @@ index 11ed411..ce36c0f 100644
  end
  end
  if(_btns[_btnup]) dz=1
-@@ -883,6 +883,8 @@ fillp(0xaaaa)
+@@ -883,6 +883,12 @@ fillp(0xaaaa)
  next_state(play_state)
  end
  function _update()
++if @0x5f80==0x9a then
++memcpy(0x9a00,0x5f82,30)
++else
 +printh"☉0☉"
 +serial(0x804,0x9a00,30)
++end
  for p,mask in pairs{[0]=0,0x10} do
  for i=0,5 do
  _btns[mask|i]=btnp(i,p) or _btns[mask|i] and btn(i,p)
-@@ -1049,7 +1051,7 @@ end
+@@ -902,7 +908,6 @@ for thing in all(_things) do
+ if(thing:tick() and thing.update) thing:update()
+ end
+ _update_state()
+-if(peek(0x5f83)==1) poke(0x5f83,0) extcmd("video")
+ _slow+=1
+ end
+ function unpack_variant()
+@@ -1049,7 +1054,7 @@ end
  end,
  function(item)
  return function(owner,weapon)
@@ -41,3 +53,22 @@ index 11ed411..ce36c0f 100644
  local inventory,ammotype,newqty=owner.inventory,item.ammotype,0
  if(ammotype) newqty=inventory[ammotype]-item.ammouse
  if newqty>=0 then
+diff --git a/cart/poom/poom_title_mini.lua b/cart/poom/poom_title_mini.lua
+index ffa0934..cc5ecd7 100644
+--- a/cart/poom/poom_title_mini.lua
++++ b/cart/poom/poom_title_mini.lua
+@@ -63,7 +63,6 @@ _update=function()
+ if(i) i()
+ _draw=d
+ u()
+-if(peek(0x5f81)==1) poke(0x5f81,0) extcmd("video")
+ if not leaderboard and peek(0x5f82)>0 then
+ leaderboard=true
+ end
+@@ -496,4 +495,4 @@ return a+t*(b-a)
+ end
+ function vcol(c)
+ return sget(112+c,128-12)
+-end
+\ No newline at end of file
++end

@@ -883,8 +883,12 @@ fillp(0xaaaa)
 next_state(play_state)
 end
 function _update()
+if @0x5f80==0x9a then
+memcpy(0x9a00,0x5f82,30)
+else
 printh"☉0☉"
 serial(0x804,0x9a00,30)
+end
 for p,mask in pairs{[0]=0,0x10} do
 for i=0,5 do
 _btns[mask|i]=btnp(i,p) or _btns[mask|i] and btn(i,p)
@@ -904,7 +908,6 @@ for thing in all(_things) do
 if(thing:tick() and thing.update) thing:update()
 end
 _update_state()
-if(peek(0x5f83)==1) poke(0x5f83,0) extcmd("video")
 _slow+=1
 end
 function unpack_variant()

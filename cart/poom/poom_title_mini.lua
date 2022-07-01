@@ -63,7 +63,6 @@ _update=function()
 if(i) i()
 _draw=d
 u()
-if(peek(0x5f81)==1) poke(0x5f81,0) extcmd("video")
 if not leaderboard and peek(0x5f82)>0 then
 leaderboard=true
 end
