@@ -8,6 +8,10 @@ POOM_HTML_CARTS := cart/poom/poom_0.p8 $(POOM_HTML_DAT)
 .PHONY: all
 all: target/p8-controller target/demo.html target/poom.html cart/poom/poom.patch
 
+.PHONY: demo
+demo: target/p8-controller
+	target/p8-controller -run cart/demo.p8
+
 .PHONY: poom
 poom: target/p8-controller
 	target/p8-controller -root_path cart/poom -run cart/poom/poom_0.p8
