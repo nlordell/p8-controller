@@ -1,4 +1,5 @@
 PICO8 ?= pico8
+IPFS_HOST ?= https://ipfs.infura.io:5001
 
 POOM_SRC := $(wildcard cart/poom/*.lua)
 POOM_HTML_DAT := $(addprefix cart/poom/,poom_1.p8 poom_2.p8 poom_3.p8 poom_4.p8 poom_5.p8 poom_6.p8 poom_7.p8 poom_8.p8 poom_9.p8 poom_10.p8 poom_11.p8 poom_12.p8 poom_13.p8 poom_e1.p8 poom_e2.p8)
@@ -10,6 +11,21 @@ all: target/p8-controller target/demo.html target/poom.html cart/poom/poom.patch
 .PHONY: poom
 poom: target/p8-controller
 	target/p8-controller -root_path cart/poom -run cart/poom/poom_0.p8
+
+.PHONY: ipfs
+ipfs: target/demo.html target/poom.html
+	curl \
+		-F 'file=;filename=demo;type=application/x-directory' \
+		-F 'file=@target/demo.html;filename=demo/index.html' \
+		-F 'file=@target/demo.js;filename=demo/demo.js' \
+		-F 'file=@target/p8-controller.js;filename=demo/p8-controller.js' \
+		'$(IPFS_HOST)/api/v0/add?pin=true'
+	curl \
+		-F 'file=;filename=poom;type=application/x-directory' \
+		-F 'file=@target/poom.html;filename=poom/index.html' \
+		-F 'file=@target/poom.js;filename=poom/poom.js' \
+		-F 'file=@target/p8-controller.js;filename=poom/p8-controller.js' \
+		'$(IPFS_HOST)/api/v0/add?pin=true'
 
 target/p8-controller: src/controller.c
 	mkdir -p target
