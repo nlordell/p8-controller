@@ -21,7 +21,7 @@ static void device_quit(void);
 static int device_connect(struct serialdevice *device);
 static void device_close(struct serialdevice *device);
 
-#define NCONTROLLERS 8
+#define NCONTROLLERS 4
 struct controllers {
     atomic_flag updated;
     SDL_GameController *handles[NCONTROLLERS];
