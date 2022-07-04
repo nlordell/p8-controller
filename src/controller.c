@@ -28,7 +28,6 @@ struct controllers {
 };
 
 static struct controllers *controllers_init(void);
-static int controllers_parseindex(char const *b, size_t len);
 static void controllers_queueupdate(struct controllers *controllers);
 static int controllers_write(struct controllers *controllers, int index, FILE *data);
 
@@ -52,14 +51,17 @@ int handler_thread(void *data) {
         SDL_Log("connected serial device");
 
         while ((len = getline(&buffer, &n, device.clock)) > 0) {
-            int index = controllers_parseindex(buffer, len);
-            if (index < 0) {
-                fwrite(buffer, sizeof(char), len, stdout);
-                fflush(stdout);
+            if (len > 0 && buffer[len - 1] == '\n') {
+                buffer[--len] = '\0';
+            }
+            if (len != 1 || buffer[0] < '0' || buffer[0] >= '0' + NCONTROLLERS) {
+                SDL_Log("forwarding printh: %s", buffer);
                 continue;
             }
 
+            int index = (int)(buffer[0] - '0');
             SDL_LogVerbose(SDL_LOG_CATEGORY_APPLICATION, "query controller %d", index);
+
             if (controllers_write(controllers, index, device.data) != 0) {
                 break;
             }
@@ -127,7 +129,7 @@ int device_init(void) {
         return -1;
     }
 
-    printf("Device initialized. Start PICO-8 with:\n    pico8 -o %s -i %s\n", clockpath, datapath);
+    printf("Device initialized. Start PICO-8 with:\n    pico8 -i %s > %s\n", datapath, clockpath);
 
     return 0;
 }
@@ -183,26 +185,8 @@ struct controllers *controllers_init(void) {
     return controllers;
 }
 
-int controllers_parseindex(char const *s, size_t len) {
-    // parse controller request of the form: "☉$INDEX☉\n"
-
-    char marker[] = u8"☉0☉\n";
-    if (len != sizeof(marker) - 1) {
-        return -1;
-    }
-
-    size_t i = sizeof(u8"☉") - 1;
-    marker[i] = s[i];
-    if (memcmp(s, marker, len) != 0) {
-        return -1;
-    }
-
-    char index = marker[i];
-    if (index < '0' || index >= '0' + NCONTROLLERS) {
-        return -1;
-    }
-
-    return index - '0';
+void controllers_queueupdate(struct controllers *controllers) {
+    atomic_flag_clear(&controllers->updated);
 }
 
 #define NAXES 6
@@ -306,8 +290,4 @@ int controllers_write(struct controllers *controllers, int index, FILE *data) {
     }
 
     return 0;
-}
-
-void controllers_queueupdate(struct controllers *controllers) {
-    atomic_flag_clear(&controllers->updated);
 }

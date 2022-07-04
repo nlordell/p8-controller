@@ -138,7 +138,7 @@ function updatectrl()
 	if @0x5f80==0x9a then
 		memcpy(0x9a00,0x5f82,30*@0x5f81)
 	else
-		printh"☉0☉"
+		printh"0"
 		serial(0x806,0x9a00,30)
 	end
 end

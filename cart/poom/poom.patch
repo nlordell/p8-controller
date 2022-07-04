@@ -1,5 +1,5 @@
 diff --git a/cart/poom/poom_main_mini.lua b/cart/poom/poom_main_mini.lua
-index 11ed411..87dfbe3 100644
+index 11ed411..2cd18d3 100644
 --- a/cart/poom/poom_main_mini.lua
 +++ b/cart/poom/poom_main_mini.lua
 @@ -662,16 +662,16 @@ _wp_hud,_btns=wp_switch(i),{}
@@ -30,7 +30,7 @@ index 11ed411..87dfbe3 100644
 +if @0x5f80==0x9a then
 +memcpy(0x9a00,0x5f82,30)
 +else
-+printh"☉0☉"
++printh"0"
 +serial(0x806,0x9a00,30)
 +end
  for p,mask in pairs{[0]=0,0x10} do

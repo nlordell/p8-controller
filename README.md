@@ -62,8 +62,8 @@ We use `☉$CONTROLLER_INDEX☉` to request controller data.
 For example, to get the controller data for controllers index 2 and 5, you could:
 
 ```lua
-printh"☉2☉\n☉5☉" -- request new controller data for controllers 2 and 5 over stdout
-serial(0x804,0x9a00,60) -- read 60 bytes from stdin, each controller state is 30 bytes long
+printh"2\n5" -- request new controller data for controllers 2 and 5 over stdout
+serial(0x806,0x9a00,60) -- read 60 bytes from input file, each controller state is 30 bytes long
 ```
 
 #### Named Pipes?
@@ -73,6 +73,9 @@ Another alternative solution would have been to use named pipes and invoke PICO-
 ```sh
 pico8 -i pipein -o pipeout
 ```
+
+This would have a major advantage over using standard input and output in that `SERIAL` commands will not freeze PICO-8 when there is no data.
+For example, starting a game with extended controller support without properly attaching a controller to the PICO-8 process's standard input and output will cause PICO-8 to freeze.
 
 However, there are a couple of issues with this approach:
 - Named pipe APIs aren't portable across Windows and Linux and have slightly different scemantics.
@@ -113,6 +116,7 @@ peek(...) -- we can now read controller data from memory
 With the standard input and output methods, or if the `SERIAL` interfaces were flushed in the order that they were queued, then there would only be 1 frame of delay.
 One possible alternative is to use named pipes, while piping standard output to one side.
 This allows you to use `PRINTH` to request new controller data, which gets flushed right away.
+This, however, has one minor disadvantage that you `PRINTH` logging.
 Something like this:
 
 ```sh
