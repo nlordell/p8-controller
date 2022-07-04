@@ -887,7 +887,7 @@ if @0x5f80==0x9a then
 memcpy(0x9a00,0x5f82,30)
 else
 printh"☉0☉"
-serial(0x804,0x9a00,30)
+serial(0x806,0x9a00,30)
 end
 for p,mask in pairs{[0]=0,0x10} do
 for i=0,5 do

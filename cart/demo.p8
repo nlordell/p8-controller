@@ -139,7 +139,7 @@ function updatectrl()
 		memcpy(0x9a00,0x5f82,30*@0x5f81)
 	else
 		printh"☉0☉"
-		serial(0x804,0x9a00,30)
+		serial(0x806,0x9a00,30)
 	end
 end
 

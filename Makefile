@@ -8,13 +8,17 @@ POOM_HTML_CARTS := cart/poom/poom_0.p8 $(POOM_HTML_DAT)
 .PHONY: all
 all: target/p8-controller target/demo.html target/poom.html cart/poom/poom.patch
 
+.PHONY: run
+run: target/p8-controller
+	target/p8-controller
+
 .PHONY: demo
-demo: target/p8-controller
-	target/p8-controller -run cart/demo.p8
+demo:
+	pico8 -run cart/demo.p8 -i controller.data > controller.clock
 
 .PHONY: poom
-poom: target/p8-controller
-	target/p8-controller -root_path cart/poom -run cart/poom/poom_0.p8
+poom:
+	pico8 -root_path cart/poom -run cart/poom/poom_0.p8 -i controller.data > controller.clock
 
 .PHONY: ipfs
 ipfs: target/demo.html target/poom.html
