@@ -54,7 +54,7 @@ int handler_thread(void *data) {
             if (len > 0 && buffer[len - 1] == '\n') {
                 buffer[--len] = '\0';
             }
-            if (len != 1 || buffer[0] < '0' || buffer[0] >= '0' + NCONTROLLERS) {
+            if (len != 1 || buffer[0] < '0' || buffer[0] > '9') {
                 SDL_Log("forwarding printh: %s", buffer);
                 continue;
             }
