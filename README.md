@@ -41,7 +41,7 @@ Just make sure to load the controller JS file in your page hosting the exported 
 <script src="p8-controller.js"></script>
 ```
 
-Take a look at the `Makefile` to see how we do this automatically for the exported demo and POOM cartriges.
+Take a look at the `Makefile` to see how we do this automatically for the exported demo and POOM cartridges.
 
 It may be confusing that there is a `src/controller.js` and a `target/p8-controller.js`.
 This was done to allow the `Makefile` to potentially bundle multiple JavaScript files in the future.
@@ -50,7 +50,7 @@ Currently it just `cp`s the file over.
 ## How It Works
 
 GPIO works very differently on various PICO-8 targets.
-Because of this, the way we support Deskop (Running PICO-8 locally on your computer) and Web (so HTML/JS exported PICO-8 games) are very different.
+Because of this, the way we support Desktop (Running PICO-8 locally on your computer) and Web (so HTML/JS exported PICO-8 games) are very different.
 
 ### Desktop
 
@@ -62,7 +62,7 @@ serial(0x806, target_address, data_length)
 ```
 
 The basic concept is to periodically send controller data over the named pipe for it to be read with `SERIAL` commands.
-The tricky bit is synchrnozing the reading and writing of the controller data.
+The tricky bit is synchronizing the reading and writing of controller data.
 For this, we use the PICO-8 process's standard output.
 Specifically the controller application will wait for some well-formed message indicating that the game is requesting controller data.
 Once this message is received, controller state is read, encoded and sent over PICO-8's standard input.
@@ -84,14 +84,15 @@ pico8 -i controller.data -o controller.clock
 
 This would have a minor advantage over piping PICO-8's standard output into the `controller.clock` serial line of not losing the PICO-8 cart's standard output.
 This allows, for example, for `PRINTH` to be used for debugging.
-Unfortunately, this also has a small issue and introduces an frame of controller input delay.
+
+Unfortunately, this also has a small issue and introduces a frame of controller input delay.
 This additional frame delay is interesting as it appears, in part, to be a PICO-8 issue.
 Specifically, PICO-8 will always wait for `SERIAL` reads before writes, even if the write was queued first.
 For example:
 
 ```lua
 serial(0x807, ...) -- write to file specified in `-o` parameter
-serial(0x806, ...) -- read from file specificed in `-i` parameter
+serial(0x806, ...) -- read from file specified in `-i` parameter
 ```
 
 In this case, unintuitively, PICO-8 will first read from the file spcified by the `-i` parameter **before** writing to the file specified by the `-o` parameter.
@@ -121,8 +122,9 @@ By using the fact that `PRINTH` flushes immediately and piping PICO-8's standard
 
 #### Why Not Standard Input/Output?
 
-Another alternative solution would have been to use PICO-8's standard input and output instead of named pipes for sending and synchronising controller data.
+Another alternative solution would have been to use PICO-8's standard input and output instead of named pipes for sending and synchronizing controller data.
 In fact, this project used to implement a wrapper binary that started PICO-8 and connected to its standard input and output ([`9765128`](https://github.com/nlordell/p8-controller/commit/976512890f2f1213a14ee5b04aa7d1d91fca5593)).
+
 This method has one major issue.
 If you were to start a game with extended controller support without properly attaching a controller to the PICO-8 process's standard input and output will cause PICO-8 to freeze.
 This is because the `SERIAL` command would get stuck waiting for 30 bytes of controller data over PICO-8's standard input that will never come.
