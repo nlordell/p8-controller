@@ -136,7 +136,7 @@ poke(0x9a0c, 0x9a) -- write marker value to memory location of first button
 printh"0" -- request controller 0 data
 serial(0x806, 0x9a00, 30) -- queue read of the controller data
 flip() -- read serial data to memory
-if @0x9a0c==0x9a then
+if @0x9a0c == 0x9a then
   -- controller not connected
 end
 ```
